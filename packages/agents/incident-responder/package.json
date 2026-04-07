@@ -1,0 +1,23 @@
+{
+  "name": "@planner/agent-incident-responder",
+  "version": "1.0.0",
+  "description": "Automated Incident Response & Remediation Agent",
+  "main": "dist/incident-responder.agent.js",
+  "types": "dist/incident-responder.agent.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts"
+  },
+  "dependencies": {
+    "@planner/core": "1.0.0",
+    "fastify": "^4.24.0",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/uuid": "^9.0.7",
+    "typescript": "^5.3.2"
+  }
+}

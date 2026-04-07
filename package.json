@@ -1,0 +1,34 @@
+{
+  "name": "planner-agent-ecosystem",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Autonomous Software Factory with 60+ Specialized Agents",
+  "workspaces": [
+    "packages/core",
+    "packages/agents/*",
+    "packages/registry",
+    "packages/cli"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "lint": "eslint packages/**/src --ext .ts",
+    "clean": "npm run clean --workspaces --if-present",
+    "dev:planner": "npm run dev -w @planner/agent-planner",
+    "dev:builder": "npm run dev -w @planner/agent-builder",
+    "migrate": "node scripts/migrate-to-core.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "eslint": "^8.54.0",
+    "typescript": "^5.3.2",
+    "glob": "^10.3.10",
+    "vitest": "^1.0.4"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  }
+}

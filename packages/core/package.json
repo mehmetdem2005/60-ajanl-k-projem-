@@ -1,0 +1,29 @@
+{
+  "name": "@planner/core",
+  "version": "1.0.0",
+  "description": "Core framework for Planner Agent Ecosystem",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "agents",
+    "autonomous",
+    "framework",
+    "typescript"
+  ],
+  "author": "Planner Team",
+  "license": "MIT",
+  "dependencies": {
+    "crypto": "^1.0.1",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/uuid": "^9.0.7"
+  }
+}

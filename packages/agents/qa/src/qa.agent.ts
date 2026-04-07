@@ -76,7 +76,7 @@ export class QAAgent extends BaseAgent {
       agent_id: this.id,
       action: 'initialized',
       status: 'success',
-       { version: this.identity.version }
+      data: { version: this.identity.version }
     });
 
     console.log(`🧪 QA Agent [${this.id}] initialized and listening for test tasks...`);
@@ -162,7 +162,7 @@ export class QAAgent extends BaseAgent {
         agent_id: this.id,
         action: 'test_run_completed',
         status: status === 'pass' ? 'success' : 'failure',
-         { reportId: report.reportId, status, coverage }
+         data: { reportId: report.reportId, status, coverage }
       });
 
       span.setStatus('ok');

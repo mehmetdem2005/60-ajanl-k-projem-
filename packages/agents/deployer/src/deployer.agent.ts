@@ -78,7 +78,7 @@ export class DeployerAgent extends BaseAgent {
       agent_id: this.id,
       action: 'initialized',
       status: 'success',
-       { version: this.identity.version }
+      data: { version: this.identity.version }
     });
 
     console.log(`🚀 Deployer Agent [${this.id}] initialized and listening for deployment tasks...`);
@@ -151,7 +151,7 @@ export class DeployerAgent extends BaseAgent {
         agent_id: this.id,
         action: 'deployment_successful',
         status: 'success',
-         { deployId, version: payload.version, environment: payload.targetEnvironment }
+         data: { deployId, version: payload.version, environment: payload.targetEnvironment }
       });
 
       span.setStatus('ok');

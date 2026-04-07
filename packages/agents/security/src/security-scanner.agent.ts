@@ -72,7 +72,7 @@ export class SecurityScannerAgent extends BaseAgent {
       agent_id: this.id,
       action: 'initialized',
       status: 'success',
-       { version: this.identity.version }
+      data: { version: this.identity.version }
     });
 
     console.log(`🛡️ Security Scanner Agent [${this.id}] initialized and listening for scan tasks...`);
@@ -130,7 +130,7 @@ export class SecurityScannerAgent extends BaseAgent {
         agent_id: this.id,
         action: 'scan_completed',
         status: status === 'pass' ? 'success' : 'failure',
-         { scanId: report.scanId, critical: criticalFindings }
+         data: { scanId: report.scanId, critical: criticalFindings }
       });
 
       span.setStatus('ok');

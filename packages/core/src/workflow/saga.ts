@@ -50,7 +50,7 @@ export class SagaCoordinator {
         agent_id: 'saga-coordinator',
         action: 'saga_started',
         status: 'success',
-         { saga_id: sagaId, step_count: steps.length }
+        data: { saga_id: sagaId, step_count: steps.length }
       });
 
       // Execute steps sequentially
@@ -86,7 +86,7 @@ export class SagaCoordinator {
             agent_id: 'saga-coordinator',
             action: 'saga_step_completed',
             status: 'success',
-             { saga_id: sagaId, step_name: step.name, agent: step.agent_id }
+            data: { saga_id: sagaId, step_name: step.name, agent: step.agent_id }
           });
 
         } catch (error) {
@@ -114,7 +114,7 @@ export class SagaCoordinator {
         agent_id: 'saga-coordinator',
         action: 'saga_completed',
         status: 'success',
-         { saga_id: sagaId }
+        data: { saga_id: sagaId }
       });
 
       return execution.results;
@@ -174,7 +174,7 @@ export class SagaCoordinator {
       agent_id: 'saga-coordinator',
       action: 'saga_compensation_completed',
       status: 'failure',
-       { saga_id: sagaId, failed_step: steps[failedStepIndex].name }
+      data: { saga_id: sagaId, failed_step: steps[failedStepIndex].name }
     });
   }
 

@@ -71,7 +71,7 @@ export class BuilderAgent extends BaseAgent {
       agent_id: this.id,
       action: 'initialized',
       status: 'success',
-       { version: this.identity.version }
+      data: { version: this.identity.version }
     });
 
     console.log(`🏗️ Builder Agent [${this.id}] initialized and listening for build tasks...`);
@@ -108,7 +108,7 @@ export class BuilderAgent extends BaseAgent {
           agent_id: this.id,
           action: 'validation_failed',
           status: 'failure',
-           { errors: validation.errors }
+           data: { errors: validation.errors }
         });
         // In production: trigger retry loop or fallback generator
       }
@@ -129,7 +129,7 @@ export class BuilderAgent extends BaseAgent {
         agent_id: this.id,
         action: 'build_completed',
         status: 'success',
-         { buildId, status: result.status }
+         data: { buildId, status: result.status }
       });
 
       span.setStatus('ok');

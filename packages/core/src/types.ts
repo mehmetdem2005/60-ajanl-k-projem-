@@ -204,7 +204,7 @@ export interface SagaStepStatus {
 }
 
 // ==================== HEALTH & SYSTEM STATUS ====================
-export type HealthStatus = 'healthy' | 'degraded' | 'unhealthy' | 'unknown';
+export type HealthStatus = 'healthy' | 'degraded' | 'unhealthy' | 'unknown' | 'starting' | 'stopping' | 'offline';
 
 export interface HealthCheckResult {
   agent_id: string;
@@ -240,3 +240,24 @@ export interface JsonSchema {
   additionalProperties?: boolean;
   [key: string]: any;
 }
+
+// ==================== MIXIN INTERFACES (for implements declarations) ====================
+export interface IAudit {
+  commit(entry: Omit<AuditEntry, 'hash' | 'timestamp' | 'prev_hash' | 'id'>): Promise<string>;
+  verifyChain(): Promise<boolean>;
+  getEntries(): Promise<AuditEntry[]>;
+  getLastHash(): string;
+}
+
+export interface ITelemetry {
+  startSpan(name: string, parentContext?: SpanContext): Span;
+  recordMetric(record: Omit<MetricRecord, 'timestamp'>): void;
+  recordError(span: Span, error: Error): void;
+  extractContext(headers: Record<string, string>): SpanContext | undefined;
+  injectContext(span: Span): Record<string, string>;
+}
+
+// Re-export mixin class types for base-agent and other consumers
+// (actual classes are in their respective mixin files)
+export type { TelemetryMixin } from './mixins/telemetry.mixin';
+export type { AuditMixin } from './mixins/audit.mixin';

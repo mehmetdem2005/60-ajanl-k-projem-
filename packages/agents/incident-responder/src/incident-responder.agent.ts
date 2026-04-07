@@ -83,7 +83,7 @@ export class IncidentResponderAgent extends BaseAgent {
       agent_id: this.id,
       action: 'initialized',
       status: 'success',
-       { version: this.identity.version }
+      data: { version: this.identity.version }
     });
 
     console.log(`🚨 Incident Responder Agent [${this.id}] initialized and listening for alerts...`);
@@ -149,7 +149,7 @@ export class IncidentResponderAgent extends BaseAgent {
         agent_id: this.id,
         action: 'incident_processed',
         status: incident.status,
-         { incidentId: incident.incidentId, severity: incident.severity }
+         data: { incidentId: incident.incidentId, severity: incident.severity }
       });
 
       span.setStatus('ok');

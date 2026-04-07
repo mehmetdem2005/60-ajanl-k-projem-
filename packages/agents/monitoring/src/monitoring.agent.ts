@@ -80,7 +80,7 @@ export class MonitoringAgent extends BaseAgent {
       agent_id: this.id,
       action: 'initialized',
       status: 'success',
-       { version: this.identity.version }
+      data: { version: this.identity.version }
     });
 
     console.log(`📊 Monitoring Agent [${this.id}] initialized and listening for metric streams...`);
@@ -152,7 +152,7 @@ export class MonitoringAgent extends BaseAgent {
         agent_id: this.id,
         action: 'metric_evaluation_completed',
         status: report.status === 'healthy' ? 'success' : 'warning',
-         { reportId: report.reportId, anomalies: anomalyCount, violations: violations.length }
+         data: { reportId: report.reportId, anomalies: anomalyCount, violations: violations.length }
       });
 
       span.setStatus('ok');

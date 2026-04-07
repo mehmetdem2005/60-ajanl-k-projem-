@@ -1,0 +1,22 @@
+{
+  "name": "@planner/agent-deployer",
+  "version": "1.0.0",
+  "description": "Deployment & GitOps Orchestration Agent",
+  "main": "dist/deployer.agent.js",
+  "types": "dist/deployer.agent.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts"
+  },
+  "dependencies": {
+    "@planner/core": "1.0.0",
+    "fastify": "^4.24.0",
+    "axios": "^1.6.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.2"
+  }
+}

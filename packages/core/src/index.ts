@@ -13,6 +13,7 @@ export * from './mixins/fmea.mixin';
 // ==================== COMMUNICATION (ACP) ====================
 export * from './acp/adapter';
 export * from './acp/registry';
+export * from './acp/registry-http-client';
 // We also export ACP types so agents can define their message contracts strictly
 export * from './acp/types';
 

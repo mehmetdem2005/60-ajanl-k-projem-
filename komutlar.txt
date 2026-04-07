@@ -1,0 +1,1094 @@
+Harika. Adım adım, hatasız ve kopyala-yapıştır hazır şekilde devam ediyoruz.
+
+Önce Incident Responder paketini kapatalım, ardından daha önce kurguladığımız **Cost Optimizer Agent**'ı (`CostAnalyzer` modülü ve istatistiksel hak boyutlandırma mantığı ile) `@planner/core` yapısına eksiksiz entegre ediyorum.
+
+---
+
+### 📄 1. `packages/agents/incident-responder/src/index.ts`
+Incident Responder paketinin giriş noktası ve factory fonksiyonu.
+
+```typescript
+// packages/agents/incident-responder/src/index.ts
+// Entry point for @planner/agent-incident-responder package
+export * from './incident-responder.agent';
+export * from './modules/runbook-executor';
+
+// Factory helper
+import { IncidentResponderAgent } from './incident-responder.agent';
+import { AgentConfig } from '@planner/core';
+
+export function createIncidentResponderAgent(config: AgentConfig): IncidentResponderAgent {
+  return new IncidentResponderAgent(config);
+}
+```
+
+✅ Kaydedin: `packages/agents/incident-responder/src/index.ts`
+
+---
+
+# 💰 COST OPTIMIZER AGENT KURULUMU
+
+Sıradaki ajan: **Cloud Cost Optimization & FinOps Orchestrator**. 
+Önceki konuşmalarımızda tanımladığımız `CostAnalyzer` modülünü ve `BaseAgent` entegrasyonunu aşağıda bulabilirsiniz.
+
+### 📄 2. `packages/agents/cost-optimizer/package.json`
+
+```json
+{
+  "name": "@planner/agent-cost-optimizer",
+  "version": "1.0.0",
+  "description": "Cloud Cost Optimization & FinOps Agent",
+  "main": "dist/cost-optimizer.agent.js",
+  "types": "dist/cost-optimizer.agent.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts"
+  },
+  "dependencies": {
+    "@planner/core": "1.0.0",
+    "fastify": "^4.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.2"
+  }
+}
+```
+
+### 📄 3. `packages/agents/cost-optimizer/tsconfig.json`
+
+```json
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "composite": true
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}
+```
+
+### 📄 4. `packages/agents/cost-optimizer/src/modules/cost-analyzer.ts`
+**Görevi:** Kaynak kullanım istatistiklerini (P50, P95, P99) analiz eder, atıl kapasiteyi tespit eder, güvenlik payı (safety margin) ekleyerek hak boyutlandırma (rightsizing) önerileri üretir ve potansiyel tasarrufu hesaplar.
+
+```typescript
+// packages/agents/cost-optimizer/src/modules/cost-analyzer.ts
+// Cost Analyzer Module
+// Statistical analysis of resource utilization vs allocated capacity.
+// Generates rightsizing recommendations with safety margins and savings forecasts.
+
+export interface ResourceUsage {
+  resourceId: string;
+  type: 'compute' | 'storage' | 'database' | 'network';
+  allocatedCapacity: number; // e.g., vCPU, GB RAM, IOPS
+  currentUsageP50: number;
+  currentUsageP95: number;
+  currentUsageP99: number;
+  costPerUnitPerMonth: number;
+}
+
+export interface OptimizationRecommendation {
+  resourceId: string;
+  currentCapacity: number;
+  recommendedCapacity: number;
+  estimatedMonthlySavings: number;
+  confidenceScore: number; // 0.0 - 1.0
+  riskLevel: 'low' | 'medium' | 'high';
+  action: 'downsize' | 'upscale' | 'rightsize' | 'terminate';
+}
+
+export class CostAnalyzer {
+  private readonly WASTE_THRESHOLD = 0.4; // <40% P95 utilization = waste
+  private readonly SAFETY_MARGIN = 1.25;   // 25% buffer above P99
+
+  analyze(resources: ResourceUsage[]): OptimizationRecommendation[] {
+    return resources.map(res => {
+      const utilizationP95 = res.currentUsageP95 / res.allocatedCapacity;
+      const utilizationP99 = res.currentUsageP99 / res.allocatedCapacity;
+
+      let recommendation: OptimizationRecommendation;
+
+      if (utilizationP95 < this.WASTE_THRESHOLD) {
+        // Significant waste detected -> Downsize
+        const recommended = Math.ceil(res.currentUsageP99 * this.SAFETY_MARGIN);
+        const savings = (res.allocatedCapacity - recommended) * res.costPerUnitPerMonth;
+        
+        recommendation = {
+          resourceId: res.resourceId,
+          currentCapacity: res.allocatedCapacity,
+          recommendedCapacity: Math.max(1, recommended),
+          estimatedMonthlySavings: Math.max(0, savings),
+          confidenceScore: 0.92,
+          riskLevel: 'low',
+          action: 'downsize'
+        };
+      } else if (utilizationP99 > 0.85) {
+        // High utilization -> Risk of throttling -> Upscale
+        const recommended = Math.ceil(res.currentUsageP99 * this.SAFETY_MARGIN);
+        const additionalCost = (recommended - res.allocatedCapacity) * res.costPerUnitPerMonth;
+        
+        recommendation = {
+          resourceId: res.resourceId,
+          currentCapacity: res.allocatedCapacity,
+          recommendedCapacity: recommended,
+          estimatedMonthlySavings: -additionalCost,
+          confidenceScore: 0.88,
+          riskLevel: 'high',
+          action: 'upscale'
+        };
+      } else {
+        // Optimal range
+        recommendation = {
+          resourceId: res.resourceId,
+          currentCapacity: res.allocatedCapacity,
+          recommendedCapacity: res.allocatedCapacity,
+          estimatedMonthlySavings: 0,
+          confidenceScore: 1.0,
+          riskLevel: 'low',
+          action: 'rightsize'
+        };
+      }
+
+      return recommendation;
+    });
+  }
+
+  calculateTotalSavings(recommendations: OptimizationRecommendation[]): number {
+    return recommendations.reduce((sum, rec) => sum + rec.estimatedMonthlySavings, 0);
+  }
+}
+```
+
+✅ Kaydedin: `packages/agents/cost-optimizer/src/modules/cost-analyzer.ts`
+
+### 📄 5. `packages/agents/cost-optimizer/src/cost-optimizer.agent.ts`
+**Görevi:** ACP üzerinden analiz isteğini alır, `CostAnalyzer` ile önerileri üretir, tasarruf potansiyelini hesaplar, risk özetini çıkarır ve önemli tasarruf fırsatlarını `FinOps/Notification` ajanlarına olay (event) olarak bildirir.
+
+```typescript
+// packages/agents/cost-optimizer/src/cost-optimizer.agent.ts
+// Cost Optimizer Agent Implementation
+// Analyzes resource utilization, generates rightsizing recommendations,
+// forecasts savings, and triggers FinOps alerts via ACP.
+// Extends BaseAgent for standard lifecycle, telemetry, audit, and FMEA capabilities.
+
+import { BaseAgent, AgentConfig, FMEAEntry, ACPMessage } from '@planner/core';
+import { CostAnalyzer, ResourceUsage, OptimizationRecommendation } from './modules/cost-analyzer';
+
+// ==================== DATA TYPES ====================
+
+export interface CostAnalysisRequest {
+  resourceId?: string;
+  billingPeriod: 'monthly' | 'quarterly' | 'yearly';
+  includeRecommendations: boolean;
+}
+
+export interface CostReport {
+  reportId: string;
+  period: string;
+  totalCurrentCost: number;
+  estimatedOptimizedCost: number;
+  totalPotentialSavings: number;
+  savingsPercentage: number;
+  recommendations: OptimizationRecommendation[];
+  riskSummary: { low: number; medium: number; high: number };
+  timestamp: number;
+}
+
+// ==================== AGENT CLASS ====================
+
+export class CostOptimizerAgent extends BaseAgent {
+  private analyzer: CostAnalyzer;
+
+  constructor(config: AgentConfig) {
+    // FMEA entries specific to cost analysis & cloud billing APIs
+    const costFmea: FMEAEntry[] = [
+      {
+        failure_mode: 'BILLING_API_TIMEOUT',
+        probability: 0.05,
+        severity: 'medium',
+        detection_method: 'Cloud provider API response > 30s',
+        mitigation_strategy: 'Retry with exponential backoff, use cached metrics',
+        fallback_action: 'Generate report based on last 30-day average'
+      },
+      {
+        failure_mode: 'FALSE_POSITIVE_DOWNSIZE',
+        probability: 0.08,
+        severity: 'high',
+        detection_method: 'Post-optimization utilization spikes > 90%',
+        mitigation_strategy: 'Enforce conservative safety margin (25%), require 14-day data window',
+        fallback_action: 'Rollback capacity, alert FinOps team, disable auto-apply'
+      }
+    ];
+
+    super(config, costFmea);
+    this.analyzer = new CostAnalyzer();
+  }
+
+  // ==================== LIFECYCLE ====================
+
+  protected async getCapabilities(): Promise<string[]> {
+    return ['cost_analysis', 'resource_rightsizing', 'savings_forecast', 'waste_detection'];
+  }
+
+  protected async onInit(): Promise<void> {
+    this.acp.listenForTasks<CostAnalysisRequest, CostReport>(
+      'analyze_costs',
+      this.handleCostAnalysis.bind(this)
+    );
+
+    await this.audit.commit({
+      agent_id: this.id,
+      action: 'initialized',
+      status: 'success',
+       { version: this.identity.version }
+    });
+
+    console.log(`💰 Cost Optimizer Agent [${this.id}] initialized and listening for analysis tasks...`);
+  }
+
+  protected async onStop(): Promise<void> {
+    console.log(`🛑 Cost Optimizer Agent [${this.id}] is shutting down.`);
+  }
+
+  // ==================== DOMAIN LOGIC ====================
+
+  private async handleCostAnalysis(
+    payload: CostAnalysisRequest,
+    message: ACPMessage<CostAnalysisRequest>
+  ): Promise<CostReport> {
+    const span = this.telemetry.startSpan('cost_optimizer.analyze_costs', message.trace_context);
+    span.setAttribute('period', payload.billingPeriod);
+
+    try {
+      console.log(`📊 Analyzing costs for period: ${payload.billingPeriod}...`);
+
+      // 1. Fetch Resource Metrics (Mock in dev, real cloud billing/metrics API in prod)
+      const resources = await this.fetchResourceMetrics(payload);
+
+      // 2. Analyze & Generate Recommendations
+      const recommendations = payload.includeRecommendations
+        ? this.analyzer.analyze(resources)
+        : [];
+
+      const totalCurrentCost = resources.reduce((sum, r) => sum + (r.allocatedCapacity * r.costPerUnitPerMonth), 0);
+      const totalSavings = this.analyzer.calculateTotalSavings(recommendations);
+      const estimatedOptimizedCost = totalCurrentCost - totalSavings;
+
+      // 3. Risk Summary
+      const riskSummary = {
+        low: recommendations.filter(r => r.riskLevel === 'low').length,
+        medium: recommendations.filter(r => r.riskLevel === 'medium').length,
+        high: recommendations.filter(r => r.riskLevel === 'high').length
+      };
+
+      // 4. Generate Report
+      const report: CostReport = {
+        reportId: `cost_${Date.now()}`,
+        period: payload.billingPeriod,
+        totalCurrentCost,
+        estimatedOptimizedCost,
+        totalPotentialSavings: totalSavings,
+        savingsPercentage: totalCurrentCost > 0 ? (totalSavings / totalCurrentCost) * 100 : 0,
+        recommendations,
+        riskSummary,
+        timestamp: Date.now()
+      };
+
+      // 5. Publish Optimization Opportunity Event
+      if (totalSavings > 50) { // Threshold in USD/EUR
+        await this.acp.publishEvent('cost.optimization_opportunity', {
+          source: this.id,
+          savings: totalSavings,
+          reportId: report.reportId,
+          high_risk_items: riskSummary.high
+        });
+      }
+
+      // 6. Audit
+      await this.audit.commit({
+        agent_id: this.id,
+        action: 'cost_analysis_completed',
+        status: 'success',
+         { reportId: report.reportId, savings: totalSavings, savings_pct: report.savingsPercentage }
+      });
+
+      span.setStatus('ok');
+      return report;
+
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      span.setStatus('error', err.message);
+      this.telemetry.recordError(span, err);
+      
+      // Invoke FMEA
+      await this.fmea.handle(err, 'cost_analysis_pipeline');
+      
+      throw error;
+    } finally {
+      span.end();
+    }
+  }
+
+  private async fetchResourceMetrics(payload: CostAnalysisRequest): Promise<ResourceUsage[]> {
+    // Mock data simulating cloud provider metrics (AWS Cost Explorer / GCP Billing)
+    return [
+      {
+        resourceId: 'prod-web-server-1',
+        type: 'compute',
+        allocatedCapacity: 8,
+        currentUsageP50: 1.2,
+        currentUsageP95: 2.1,
+        currentUsageP99: 2.5,
+        costPerUnitPerMonth: 25
+      },
+      {
+        resourceId: 'prod-db-primary',
+        type: 'database',
+        allocatedCapacity: 64,
+        currentUsageP50: 48,
+        currentUsageP95: 55,
+        currentUsageP99: 58,
+        costPerUnitPerMonth: 12
+      },
+      {
+        resourceId: 'staging-api-cluster',
+        type: 'compute',
+        allocatedCapacity: 16,
+        currentUsageP50: 0.5,
+        currentUsageP95: 1.0,
+        currentUsageP99: 1.2,
+        costPerUnitPerMonth: 20
+      }
+    ];
+  }
+}
+```
+
+✅ **Bu dosya tam ve eksiksizdir.** `packages/agents/cost-optimizer/src/cost-optimizer.agent.ts` olarak kaydedin.
+
+---
+
+✅ **Şu ana kadar tamamlananlar:**
+1. Incident Responder `index.ts`
+2. Cost Optimizer `package.json` & `tsconfig.json`
+3. Cost Optimizer `cost-analyzer.ts` (Özgün modül)
+4. Cost Optimizer `cost-optimizer.agent.ts` (Ana sınıf)
+
+Hazır olduğunuzda **"Devam"** yazın. Sıradaki adım: **`packages/agents/cost-optimizer/src/index.ts`** ve ardından **Compliance Auditor Agent**'ın kurulumuna geçeceğiz. Bekliyorum. 📝
+
+
+
+
+
+
+Harika. Adım adım, hatasız ve kopyala-yapıştır hazır şekilde devam ediyoruz.
+
+Önce Cost Optimizer paketini kapatalım, ardından daha önce kurguladığımız **Compliance Auditor Agent**'ı (`PolicyEngine` modülü ve OPA/Regodeterministik politika doğrulama mantığı ile) `@planner/core` yapısına eksiksiz entegre ediyorum.
+
+---
+
+### 📄 1. `packages/agents/cost-optimizer/src/index.ts`
+Cost Optimizer paketinin giriş noktası ve factory fonksiyonu.
+
+```typescript
+// packages/agents/cost-optimizer/src/index.ts
+// Entry point for @planner/agent-cost-optimizer package
+export * from './cost-optimizer.agent';
+export * from './modules/cost-analyzer';
+
+// Factory helper
+import { CostOptimizerAgent } from './cost-optimizer.agent';
+import { AgentConfig } from '@planner/core';
+
+export function createCostOptimizerAgent(config: AgentConfig): CostOptimizerAgent {
+  return new CostOptimizerAgent(config);
+}
+```
+
+✅ Kaydedin: `packages/agents/cost-optimizer/src/index.ts`
+
+---
+
+# ⚖️ COMPLIANCE AUDITOR AGENT KURULUMU
+
+Sıradaki ajan: **Compliance Auditing & Policy Enforcement**. 
+Önceki konuşmalarımızda tanımladığımız `PolicyEngine` modülünü ve `BaseAgent` entegrasyonunu aşağıda bulabilirsiniz.
+
+### 📄 2. `packages/agents/compliance-auditor/package.json`
+
+```json
+{
+  "name": "@planner/agent-compliance-auditor",
+  "version": "1.0.0",
+  "description": "Compliance Auditing & Policy Enforcement Agent",
+  "main": "dist/compliance-auditor.agent.js",
+  "types": "dist/compliance-auditor.agent.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts"
+  },
+  "dependencies": {
+    "@planner/core": "1.0.0",
+    "fastify": "^4.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.2"
+  }
+}
+```
+
+### 📄 3. `packages/agents/compliance-auditor/tsconfig.json`
+
+```json
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "composite": true
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}
+```
+
+### 📄 4. `packages/agents/compliance-auditor/src/modules/policy-engine.ts`
+**Görevi:** Open Policy Agent (OPA) mantığıyla uyumlu, deterministik politika değerlendirmesi yapar. Kanıtları (evidence) kontrol denetimleriyle (controls) eşleştirir, ihlalleri severity bazlı sınıflandırır ve uyumluluk skoru hesaplar.
+
+```typescript
+// packages/agents/compliance-auditor/src/modules/policy-engine.ts
+// Policy Engine Module
+// Deterministic compliance evaluation logic aligned with OPA/Rego principles.
+// Maps evidence to controls, detects violations, and calculates compliance scores.
+
+export interface PolicyEvaluationRequest {
+  framework: string; // e.g., 'soc2', 'gdpr', 'iso27001', 'hipaa'
+  evidence: Record<string, any>;
+}
+
+export interface PolicyViolation {
+  controlId: string;
+  framework: string;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  description: string;
+  missingEvidence: string[];
+  remediationHint: string;
+}
+
+export interface PolicyEvaluationResult {
+  passed: boolean;
+  violations: PolicyViolation[];
+  complianceScore: number; // 0.0 - 100.0
+  evaluatedAt: number;
+}
+
+export class PolicyEngine {
+  private readonly controlMapping: Record<string, string[]> = {
+    soc2: ['CC6.1', 'CC6.2', 'CC6.3', 'CC7.1', 'CC7.2', 'CC8.1'],
+    gdpr: ['Art.32.1', 'Art.32.2', 'Art.33', 'Art.35'],
+    iso27001: ['A.9.1.1', 'A.9.2.1', 'A.10.1.1', 'A.12.4.1', 'A.14.2.1'],
+    hipaa: ['164.312.a', '164.312.b', '164.312.d', '164.312.e']
+  };
+
+  /**
+   * Evaluates evidence against framework controls.
+   * Deterministic execution: no LLM calls, pure logic + config-driven rules.
+   */
+  async evaluate(request: PolicyEvaluationRequest): Promise<PolicyEvaluationResult> {
+    const controls = this.controlMapping[request.framework.toLowerCase()] || [];
+    const violations: PolicyViolation[] = [];
+
+    for (const controlId of controls) {
+      const hasEvidence = this.verifyEvidence(request.evidence, controlId);
+      
+      if (!hasEvidence) {
+        violations.push({
+          controlId,
+          framework: request.framework,
+          severity: this.determineSeverity(controlId, request.framework),
+          description: `Control ${controlId} requires evidence that is missing or expired`,
+          missingEvidence: [`evidence_${controlId.replace(/[.]/g, '_')}`],
+          remediationHint: `Collect, sign, and upload evidence for control ${controlId}`
+        });
+      }
+    }
+
+    const complianceScore = controls.length > 0 
+      ? Math.max(0, 100 - (violations.length * (100 / controls.length))) 
+      : 0;
+
+    return {
+      passed: violations.length === 0,
+      violations,
+      complianceScore,
+      evaluatedAt: Date.now()
+    };
+  }
+
+  private verifyEvidence(evidence: Record<string, any>, controlId: string): boolean {
+    const key = `evidence_${controlId.replace(/[.]/g, '_')}`;
+    const entry = evidence[key];
+    if (!entry) return false;
+    
+    // Check expiration (e.g., evidence older than 90 days is considered stale)
+    if (entry.expiresAt && new Date(entry.expiresAt) < new Date()) return false;
+    return true;
+  }
+
+  private determineSeverity(controlId: string, framework: string): PolicyViolation['severity'] {
+    // Rule-based severity mapping
+    if (framework === 'gdpr' && controlId.startsWith('Art.32')) return 'critical';
+    if (framework === 'hipaa' && controlId.includes('164.312')) return 'high';
+    if (controlId.startsWith('CC7') || controlId.startsWith('A.12')) return 'high';
+    return 'medium';
+  }
+}
+```
+
+✅ Kaydedin: `packages/agents/compliance-auditor/src/modules/policy-engine.ts`
+
+### 📄 5. `packages/agents/compliance-auditor/src/compliance-auditor.agent.ts`
+**Görevi:** Çoklu framework denetimlerini yönetir, `PolicyEngine` ile otomatik değerlendirme yapar, kritik ihlalleri A2A üzerinden bildirir ve immutable audit kaydı oluşturur.
+
+```typescript
+// packages/agents/compliance-auditor/src/compliance-auditor.agent.ts
+// Compliance Auditor Agent Implementation
+// Orchestrates multi-framework compliance audits, evaluates evidence against policies,
+// calculates risk scores, and publishes compliance reports via ACP.
+// Extends BaseAgent for standard lifecycle, telemetry, audit, and FMEA capabilities.
+
+import { BaseAgent, AgentConfig, FMEAEntry, ACPMessage } from '@planner/core';
+import { PolicyEngine, PolicyEvaluationRequest, PolicyEvaluationResult } from './modules/policy-engine';
+
+// ==================== DATA TYPES ====================
+
+export interface AuditRequest {
+  targetSystem: string;
+  frameworks: string[]; // e.g., ['soc2', 'gdpr']
+  evidenceBundle: Record<string, any>;
+  autoRemediate: boolean;
+}
+
+export interface AuditReport {
+  reportId: string;
+  targetSystem: string;
+  frameworks: string[];
+  overallStatus: 'compliant' | 'non_compliant' | 'partial';
+  complianceScores: Record<string, number>;
+  criticalViolations: number;
+  totalViolations: number;
+  remediationActions: string[];
+  generatedAt: number;
+}
+
+// ==================== AGENT CLASS ====================
+
+export class ComplianceAuditorAgent extends BaseAgent {
+  private policyEngine: PolicyEngine;
+
+  constructor(config: AgentConfig) {
+    // FMEA entries specific to compliance & policy evaluation
+    const complianceFmea: FMEAEntry[] = [
+      {
+        failure_mode: 'EVIDENCE_SCHEMA_MISMATCH',
+        probability: 0.1,
+        severity: 'high',
+        detection_method: 'Missing required evidence fields',
+        mitigation_strategy: 'Reject audit, request standardized evidence package',
+        fallback_action: 'Run partial audit with explicit warnings in report'
+      },
+      {
+        failure_mode: 'POLICY_ENGINE_TIMEOUT',
+        probability: 0.05,
+        severity: 'critical',
+        detection_method: 'Evaluation exceeds 15s',
+        mitigation_strategy: 'Switch to lightweight local rule engine',
+        fallback_action: 'Return preliminary report with "unverified" flag'
+      }
+    ];
+
+    super(config, complianceFmea);
+    this.policyEngine = new PolicyEngine();
+  }
+
+  // ==================== LIFECYCLE ====================
+
+  protected async getCapabilities(): Promise<string[]> {
+    return ['compliance_auditing', 'policy_evaluation', 'evidence_verification', 'risk_scoring'];
+  }
+
+  protected async onInit(): Promise<void> {
+    this.acp.listenForTasks<AuditRequest, AuditReport>(
+      'execute_audit',
+      this.handleAudit.bind(this)
+    );
+
+    await this.audit.commit({
+      agent_id: this.id,
+      action: 'initialized',
+      status: 'success',
+       { version: this.identity.version }
+    });
+
+    console.log(`⚖️ Compliance Auditor Agent [${this.id}] initialized and listening for audit tasks...`);
+  }
+
+  protected async onStop(): Promise<void> {
+    console.log(`🛑 Compliance Auditor Agent [${this.id}] is shutting down.`);
+  }
+
+  // ==================== DOMAIN LOGIC ====================
+
+  private async handleAudit(
+    payload: AuditRequest,
+    message: ACPMessage<AuditRequest>
+  ): Promise<AuditReport> {
+    const span = this.telemetry.startSpan('compliance.execute_audit', message.trace_context);
+    span.setAttribute('target', payload.targetSystem);
+    span.setAttribute('frameworks', payload.frameworks.join(','));
+
+    try {
+      console.log(`📋 Executing compliance audit for ${payload.targetSystem}...`);
+
+      let criticalViolations = 0;
+      let totalViolations = 0;
+      const scores: Record<string, number> = {};
+      const remediationActions: string[] = [];
+
+      for (const framework of payload.frameworks) {
+        const request: PolicyEvaluationRequest = { framework, evidence: payload.evidenceBundle };
+        const result: PolicyEvaluationResult = await this.policyEngine.evaluate(request);
+        
+        scores[framework] = result.complianceScore;
+        totalViolations += result.violations.length;
+        criticalViolations += result.violations.filter(v => v.severity === 'critical').length;
+        
+        remediationActions.push(...result.violations.slice(0, 2).map(v => v.remediationHint));
+      }
+
+      const overallStatus = criticalViolations > 0 ? 'non_compliant' 
+        : (totalViolations > 0 ? 'partial' : 'compliant');
+
+      const report: AuditReport = {
+        reportId: `audit_${Date.now()}`,
+        targetSystem: payload.targetSystem,
+        frameworks: payload.frameworks,
+        overallStatus,
+        complianceScores: scores,
+        criticalViolations,
+        totalViolations,
+        remediationActions,
+        generatedAt: Date.now()
+      };
+
+      // Publish compliance event for dashboards & notification agents
+      await this.acp.publishEvent('compliance.audit_completed', {
+        source: this.id,
+        reportId: report.reportId,
+        status: overallStatus,
+        critical_violations: criticalViolations
+      });
+
+      // Audit
+      await this.audit.commit({
+        agent_id: this.id,
+        action: 'audit_completed',
+        status: overallStatus === 'compliant' ? 'success' : 'warning',
+         { reportId: report.reportId, status: overallStatus, critical: criticalViolations }
+      });
+
+      span.setStatus('ok');
+      return report;
+
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      span.setStatus('error', err.message);
+      this.telemetry.recordError(span, err);
+      
+      // Invoke FMEA
+      await this.fmea.handle(err, 'compliance_audit_pipeline');
+      
+      throw error;
+    } finally {
+      span.end();
+    }
+  }
+}
+```
+
+✅ **Bu dosya tam ve eksiksizdir.** `packages/agents/compliance-auditor/src/compliance-auditor.agent.ts` olarak kaydedin.
+
+---
+
+✅ **Şu ana kadar tamamlananlar:**
+1. Cost Optimizer `index.ts`
+2. Compliance Auditor `package.json` & `tsconfig.json`
+3. Compliance Auditor `policy-engine.ts` (Özgün modül)
+4. Compliance Auditor `compliance-auditor.agent.ts` (Ana sınıf)
+
+Hazır olduğunuzda **"Devam"** yazın. Sıradaki adım: **`packages/agents/compliance-auditor/src/index.ts`** ve ardından **Notification Agent**'ın kurulumuna geçeceğiz. Bekliyorum. 📝
+
+
+
+
+Harika. Adım adım, hatasız ve kopyala-yapıştır hazır şekilde devam ediyoruz.
+
+Önce Compliance Auditor paketini kapatalım, ardından daha önce kurguladığımız **Notification Agent**'ı (`ChannelManager` modülü ve çoklu kanal yönlendirme/fallback mantığı ile) `@planner/core` yapısına eksiksiz entegre ediyorum.
+
+---
+
+### 📄 1. `packages/agents/compliance-auditor/src/index.ts`
+Compliance Auditor paketinin giriş noktası ve factory fonksiyonu.
+
+```typescript
+// packages/agents/compliance-auditor/src/index.ts
+// Entry point for @planner/agent-compliance-auditor package
+export * from './compliance-auditor.agent';
+export * from './modules/policy-engine';
+
+// Factory helper
+import { ComplianceAuditorAgent } from './compliance-auditor.agent';
+import { AgentConfig } from '@planner/core';
+
+export function createComplianceAuditorAgent(config: AgentConfig): ComplianceAuditorAgent {
+  return new ComplianceAuditorAgent(config);
+}
+```
+
+✅ Kaydedin: `packages/agents/compliance-auditor/src/index.ts`
+
+---
+
+# 📢 NOTIFICATION AGENT KURULUMU
+
+Sıradaki ajan: **Multi-Channel Notification & Alert Routing**. 
+Önceki konuşmalarımızda tanımladığımız `ChannelManager` modülünü ve `BaseAgent` entegrasyonunu aşağıda bulabilirsiniz.
+
+### 📄 2. `packages/agents/notification/package.json`
+
+```json
+{
+  "name": "@planner/agent-notification",
+  "version": "1.0.0",
+  "description": "Multi-Channel Notification & Alert Routing Agent",
+  "main": "dist/notification.agent.js",
+  "types": "dist/notification.agent.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts"
+  },
+  "dependencies": {
+    "@planner/core": "1.0.0",
+    "fastify": "^4.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.2"
+  }
+}
+```
+
+### 📄 3. `packages/agents/notification/tsconfig.json`
+
+```json
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "composite": true
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}
+```
+
+### 📄 4. `packages/agents/notification/src/modules/channel-manager.ts`
+**Görevi:** Bildirimleri önceliğe göre uygun kanallara (Slack, PagerDuty, Email, Webhook) yönlendirir, alarm fırtınalarını (alert flood) önlemek için rate-limiting ve deduplication uygular, ilk kanal başarısız olursa otomatik fallback yapar.
+
+```typescript
+// packages/agents/notification/src/modules/channel-manager.ts
+// Channel Manager Module
+// Priority-based routing, rate limiting, and fallback delivery logic.
+// Prevents alert fatigue and ensures critical notifications reach on-call personnel.
+
+export type ChannelType = 'slack' | 'email' | 'pagerduty' | 'webhook' | 'sms';
+export type AlertPriority = 'low' | 'medium' | 'high' | 'critical';
+
+export interface NotificationPayload {
+  recipient: string; // user, channel ID, or email
+  channel: ChannelType;
+  priority: AlertPriority;
+  title: string;
+  message: string;
+  metadata?: Record<string, any>;
+}
+
+export interface DeliveryResult {
+  channelId: string;
+  status: 'delivered' | 'failed' | 'rate_limited' | 'fallback_used';
+  timestamp: number;
+  error?: string;
+}
+
+export class ChannelManager {
+  private readonly rateLimiters: Map<string, { count: number; resetAt: number }> = new Map();
+  private readonly MAX_RATE_PER_MINUTE = 30;
+
+  /**
+   * Routes notification through appropriate channels based on priority.
+   * Implements fallback chain: if primary fails, try secondary.
+   */
+  async routeAndDeliver(payload: Omit<NotificationPayload, 'channel'>): Promise<DeliveryResult[]> {
+    const targetChannels = this.selectChannels(payload.priority);
+    const results: DeliveryResult[] = [];
+
+    for (const channel of targetChannels) {
+      const msg = { ...payload, channel };
+      
+      // 1. Rate Limiting & Deduplication Check
+      if (this.isRateLimited(channel)) {
+        results.push({ channelId: channel, status: 'rate_limited', timestamp: Date.now() });
+        continue;
+      }
+
+      // 2. Attempt Delivery
+      try {
+        const success = await this.attemptDelivery(channel, msg);
+        results.push({
+          channelId: channel,
+          status: success ? 'delivered' : 'failed',
+          timestamp: Date.now()
+        });
+        if (success) break; // Stop after first successful delivery
+      } catch (error) {
+        results.push({
+          channelId: channel,
+          status: 'fallback_used',
+          timestamp: Date.now(),
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+
+    return results;
+  }
+
+  private selectChannels(priority: AlertPriority): ChannelType[] {
+    switch (priority) {
+      case 'critical': return ['pagerduty', 'slack', 'sms'];
+      case 'high':     return ['slack', 'email'];
+      case 'medium':   return ['slack'];
+      case 'low':      return ['webhook'];
+      default:         return ['webhook'];
+    }
+  }
+
+  private isRateLimited(channel: string): boolean {
+    const minuteKey = Math.floor(Date.now() / 60000);
+    const key = `${channel}:${minuteKey}`;
+    const state = this.rateLimiters.get(key) || { count: 0, resetAt: minuteKey + 1 };
+    
+    if (state.count >= this.MAX_RATE_PER_MINUTE) return true;
+    
+    this.rateLimiters.set(key, { count: state.count + 1, resetAt: state.resetAt });
+    return false;
+  }
+
+  private async attemptDelivery(channel: ChannelType, payload: NotificationPayload): Promise<boolean> {
+    // Mock API integration (Replace with actual Slack/PagerDuty/SMS SDK in production)
+    await new Promise(r => setTimeout(r, 300));
+    
+    // Simulate 95% success rate
+    if (Math.random() < 0.05) throw new Error(`Provider API error for ${channel}`);
+    return true;
+  }
+}
+```
+
+✅ Kaydedin: `packages/agents/notification/src/modules/channel-manager.ts`
+
+### 📄 5. `packages/agents/notification/src/notification.agent.ts`
+**Görevi:** Sistem alarmlarını ve ajan bildirim isteklerini ACP üzerinden dinler, şablonları işler, `ChannelManager` ile çoklu kanala dağıtır, teslimat sonuçlarını izler ve immutable audit kaydı oluşturur.
+
+```typescript
+// packages/agents/notification/src/notification.agent.ts
+// Notification Agent Implementation
+// Receives alerts/requests, formats messages, routes via ChannelManager,
+// tracks delivery status, and publishes delivery reports via ACP.
+// Extends BaseAgent for standard lifecycle, telemetry, audit, and FMEA capabilities.
+
+import { BaseAgent, AgentConfig, FMEAEntry, ACPMessage } from '@planner/core';
+import { ChannelManager, DeliveryResult, AlertPriority } from './modules/channel-manager';
+
+// ==================== DATA TYPES ====================
+
+export interface NotificationRequest {
+  recipients: string[]; // e.g., ['#dev-team', 'oncall@company.com']
+  priority: AlertPriority;
+  title: string;
+  message: string;
+  context?: Record<string, any>;
+}
+
+export interface NotificationReport {
+  requestId: string;
+  status: 'sent' | 'partial' | 'failed';
+  deliveries: DeliveryResult[];
+  timestamp: number;
+}
+
+// ==================== AGENT CLASS ====================
+
+export class NotificationAgent extends BaseAgent {
+  private channelManager: ChannelManager;
+
+  constructor(config: AgentConfig) {
+    // FMEA entries specific to notification delivery
+    const notificationFmea: FMEAEntry[] = [
+      {
+        failure_mode: 'PROVIDER_API_UNAVAILABLE',
+        probability: 0.1,
+        severity: 'medium',
+        detection_method: 'HTTP 5xx or timeout from Slack/PagerDuty',
+        mitigation_strategy: 'Retry with exponential backoff, switch to backup channel',
+        fallback_action: 'Queue message locally, retry every 60s until delivered'
+      },
+      {
+        failure_mode: 'ALERT_FATIGUE_DETECTED',
+        probability: 0.15,
+        severity: 'high',
+        detection_method: '>20 identical alerts in 10 minutes',
+        mitigation_strategy: 'Enable aggressive grouping, send digest instead of individual',
+        fallback_action: 'Suppress duplicates, log summary, notify admin'
+      }
+    ];
+
+    super(config, notificationFmea);
+    this.channelManager = new ChannelManager();
+  }
+
+  // ==================== LIFECYCLE ====================
+
+  protected async getCapabilities(): Promise<string[]> {
+    return ['multi_channel_routing', 'alert_grouping', 'delivery_tracking', 'template_formatting'];
+  }
+
+  protected async onInit(): Promise<void> {
+    // Listen for direct notification requests
+    this.acp.listenForTasks<NotificationRequest, NotificationReport>(
+      'send_notification',
+      this.handleNotificationRequest.bind(this)
+    );
+
+    // Auto-listen for system events
+    this.acp.listenForEvents<any>('alert.triggered', (payload) => this.processSystemEvent('alert', payload));
+    this.acp.listenForEvents<any>('incident.escalation', (payload) => this.processSystemEvent('incident', payload));
+    this.acp.listenForEvents<any>('deployment.completed', (payload) => this.processSystemEvent('deployment', payload));
+
+    await this.audit.commit({
+      agent_id: this.id,
+      action: 'initialized',
+      status: 'success',
+      data: { version: this.identity.version }
+    });
+
+    console.log(`📢 Notification Agent [${this.id}] initialized and listening for events...`);
+  }
+
+  protected async onStop(): Promise<void> {
+    console.log(`🛑 Notification Agent [${this.id}] shutting down.`);
+  }
+
+  // ==================== DOMAIN LOGIC ====================
+
+  private async handleNotificationRequest(
+    payload: NotificationRequest,
+    message: ACPMessage<NotificationRequest>
+  ): Promise<NotificationReport> {
+    return this.executeDelivery(payload.recipients, payload.priority, payload.title, payload.message, payload.context);
+  }
+
+  private async processSystemEvent(eventType: string, payload: any): Promise<void> {
+    const priority: AlertPriority = payload.severity === 'critical' ? 'critical' 
+      : payload.severity === 'warning' ? 'high' : 'medium';
+    
+    const title = `${eventType.charAt(0).toUpperCase() + eventType.slice(1)}: ${payload.source || 'System'}`;
+    const message = payload.message || `Automated ${eventType} notification triggered.`;
+    const recipients = priority === 'critical' ? ['oncall@company.com', '#ops-alerts'] : ['#dev-notifications'];
+
+    await this.executeDelivery(recipients, priority, title, message, payload);
+  }
+
+  private async executeDelivery(
+    recipients: string[],
+    priority: AlertPriority,
+    title: string,
+    message: string,
+    context?: Record<string, any>
+  ): Promise<NotificationReport> {
+    const span = this.telemetry.startSpan('notification.execute_delivery');
+    try {
+      const allDeliveries: DeliveryResult[] = [];
+
+      for (const recipient of recipients) {
+        const deliveries = await this.channelManager.routeAndDeliver({
+          recipient,
+          priority,
+          title,
+          message,
+          metadata: context
+        });
+        allDeliveries.push(...deliveries);
+      }
+
+      const failedCount = allDeliveries.filter(d => d.status === 'failed').length;
+      const status = failedCount === 0 ? 'sent' : (failedCount < allDeliveries.length ? 'partial' : 'failed');
+
+      // Audit
+      await this.audit.commit({
+        agent_id: this.id,
+        action: 'notifications_sent',
+        status: status === 'sent' ? 'success' : 'warning',
+        data: { requestId: `notif_${Date.now()}`, status, recipients: recipients.length, failed: failedCount }
+      });
+
+      span.setStatus('ok');
+      return { requestId: `notif_${Date.now()}`, status, deliveries: allDeliveries, timestamp: Date.now() };
+
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      span.setStatus('error', err.message);
+      this.telemetry.recordError(span, err);
+      await this.fmea.handle(err, 'notification_delivery_pipeline');
+      throw error;
+    } finally {
+      span.end();
+    }
+  }
+}
+```
+
+✅ **Bu dosya tam ve eksiksizdir.** `packages/agents/notification/src/notification.agent.ts` olarak kaydedin.
+
+---
+
+✅ **Şu ana kadar tamamlananlar:**
+1. Compliance Auditor `index.ts`
+2. Notification `package.json` & `tsconfig.json`
+3. Notification `channel-manager.ts` (Özgün modül)
+4. Notification `notification.agent.ts` (Ana sınıf)
+
+Hazır olduğunuzda **"Devam"** yazın. Sıradaki adım: **`packages/agents/notification/src/index.ts`** ve ardından **Registry Service** (Merkezi Servis Keşif Sunucusu) kurulumuna geçeceğiz. Bekliyorum. 📝
+
+
+

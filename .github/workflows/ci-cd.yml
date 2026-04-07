@@ -1,0 +1,163 @@
+# .github/workflows/ci-cd.yml
+env:
+  NODE_VERSION: '20'
+  REGISTRY: ghcr.io/${{ github.repository_owner }}
+  HELM_CHART_PATH: packages/infra/helm/planner-ecosystem
+
+name: CI/CD Pipeline
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  validate:
+    name: 🔍 Lint & TypeCheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run lint
+      - run: npx tsc --noEmit
+
+  test:
+    name: 🧪 Unit & Integration Tests
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run build
+      - run: npm test -- --coverage
+        env:
+          NODE_ENV: test
+          LOG_LEVEL: error
+      - name: Upload Coverage Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 14
+
+  security-scan:
+    name: 🛡️ Vulnerability Scan
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: 'CRITICAL,HIGH'
+      - name: Upload Trivy scan results to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  build-push-images:
+    name: 🐳 Build & Push Container Images
+    needs: [test, security-scan]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        agent: 
+          - name: registry
+            pkg: "@planner/registry-service"
+          - name: planner
+            pkg: "@planner/agent-planner"
+          - name: builder
+            pkg: "@planner/agent-builder"
+          - name: qa
+            pkg: "@planner/agent-qa"
+          - name: deployer
+            pkg: "@planner/agent-deployer"
+          - name: monitoring
+            pkg: "@planner/agent-monitoring"
+          - name: incident
+            pkg: "@planner/agent-incident-responder"
+          - name: cost
+            pkg: "@planner/agent-cost-optimizer"
+          - name: compliance
+            pkg: "@planner/agent-compliance-auditor"
+          - name: notification
+            pkg: "@planner/agent-notification"
+      fail-fast: false
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.agent
+          push: true
+          build-args: AGENT_PKG=${{ matrix.agent.pkg }}
+          tags: |
+            ${{ env.REGISTRY }}/agent-${{ matrix.agent.name }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/agent-${{ matrix.agent.name }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  package-deploy:
+    name: 📦 Package & Deploy
+    needs: build-push-images
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v3
+        with:
+          version: 'v3.13.0'
+      - uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.2'
+
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBE_CONFIG_BASE64 }}" | base64 -d > $HOME/.kube/config
+
+      - name: Set Helm Version
+        id: set-version
+        run: |
+          HELM_VER="1.0.${GITHUB_RUN_NUMBER}"
+          echo "HELM_VER=$HELM_VER" >> $GITHUB_ENV
+
+      - name: Helm Package & Push to OCI
+        run: |
+          helm package ${{ env.HELM_CHART_PATH }} --version ${{ env.HELM_VER }} --destination ./dist/charts
+          helm push ./dist/charts/planner-ecosystem-${{ env.HELM_VER }}.tgz oci://${{ env.REGISTRY }}/charts
+
+      - name: Deploy to Production
+        run: |
+          helm upgrade --install planner-ecosystem \
+            oci://${{ env.REGISTRY }}/charts/planner-ecosystem \
+            --version ${{ env.HELM_VER }} \
+            --namespace planner-system \
+            --create-namespace \
+            --wait --timeout=10m \
+            --values ${{ env.HELM_CHART_PATH }}/values.yaml \
+            --set global.image.tag=${{ github.sha }}

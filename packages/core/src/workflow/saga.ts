@@ -4,21 +4,20 @@
 // Integrates with ACPAdapter for inter-agent communication.
 
 import { ACPAdapter } from '../acp/adapter';
+
+import { IStateAdapter, MemoryAdapter } from '../state/adapters';
 import { SagaStep, SagaExecution, SagaStepStatus, TelemetryMixin, AuditMixin } from '../types';
 
-export class SagaCoordinator {
   private acp: ACPAdapter;
   private telemetry: TelemetryMixin;
   private audit: AuditMixin;
+  private state: IStateAdapter;
 
-  // Map to store active saga executions in memory.
-  // In production, this should be backed by a persistent store (Redis/DB).
-  private activeSagas: Map<string, SagaExecution> = new Map();
-
-  constructor(acp: ACPAdapter, telemetry: TelemetryMixin, audit: AuditMixin) {
+  constructor(acp: ACPAdapter, telemetry: TelemetryMixin, audit: AuditMixin, state: IStateAdapter = new MemoryAdapter()) {
     this.acp = acp;
     this.telemetry = telemetry;
     this.audit = audit;
+    this.state = state;
   }
 
   /**
@@ -43,7 +42,7 @@ export class SagaCoordinator {
       })),
       results: {}
     };
-    this.activeSagas.set(sagaId, execution);
+    await this.state.set(`saga:${sagaId}`, execution, 86400); // 1 gün TTL
 
     try {
       await this.audit.commit({
@@ -140,7 +139,7 @@ export class SagaCoordinator {
     failedStepIndex: number,
     originalError: Error
   ): Promise<void> {
-    const execution = this.activeSagas.get(sagaId);
+    const execution = await this.state.get<SagaExecution>(`saga:${sagaId}`);
     if (!execution) return;
 
     execution.status = 'compensating';
@@ -181,7 +180,7 @@ export class SagaCoordinator {
   /**
    * Retrieves the current status of a running or completed saga.
    */
-  getStatus(sagaId: string): SagaExecution | undefined {
-    return this.activeSagas.get(sagaId);
+  async getStatus(sagaId: string): Promise<SagaExecution | undefined> {
+    return await this.state.get<SagaExecution>(`saga:${sagaId}`);
   }
 }

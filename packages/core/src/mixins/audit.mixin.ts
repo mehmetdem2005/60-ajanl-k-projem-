@@ -4,17 +4,15 @@
 // Cryptographically linked via SHA-256
 
 import crypto from 'crypto';
+
+import { IStateAdapter, MemoryAdapter } from '../state/adapters';
 import { IAudit, AuditConfig, AuditEntry } from '../types';
 
-export class AuditMixin implements IAudit {
   private config: AuditConfig;
   private lastHash: string;
+  private state: IStateAdapter;
 
-  // In-memory storage for the audit chain.
-  // In production, this would be flushed to Database/S3/QLDB.
-  private entries: AuditEntry[] = [];
-
-  constructor(config: AuditConfig) {
+  constructor(config: AuditConfig, state: IStateAdapter = new MemoryAdapter()) {
     this.config = {
       storage_driver: 'memory',
       encryption_enabled: true,
@@ -22,7 +20,7 @@ export class AuditMixin implements IAudit {
       worm_mode: true,
       ...config
     };
-
+    this.state = state;
     // Genesis hash for the first block in the chain
     this.lastHash = crypto.createHash('sha256').update('planner-genesis-block').digest('hex');
   }
@@ -58,8 +56,9 @@ export class AuditMixin implements IAudit {
 
     entry.hash = crypto.createHash('sha256').update(contentToHash).digest('hex');
 
-    // Store entry
-    this.entries.push(entry);
+
+    // Store entry (persist)
+    await this.state.set(`audit:${entry.id}`, entry, this.config.retention_days * 86400);
 
     // Update chain pointer
     this.lastHash = entry.hash;
@@ -75,15 +74,17 @@ export class AuditMixin implements IAudit {
    * Returns false if any link is broken (tampering detected).
    */
   async verifyChain(): Promise<boolean> {
-    let currentHash = crypto.createHash('sha256').update('planner-genesis-block').digest('hex');
+    const keys = await this.state.keys('audit:');
+    const entries = (await Promise.all(keys.map(k => this.state.get<AuditEntry>(k)))).filter(Boolean) as AuditEntry[];
+    entries.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 
-    for (const entry of this.entries) {
+    let currentHash = crypto.createHash('sha256').update('planner-genesis-block').digest('hex');
+    for (const entry of entries) {
       // 1. Check Link Integrity (prev_hash matches previous entry's hash)
       if (entry.prev_hash !== currentHash) {
         console.error(`[AUDIT] Chain broken at entry ${entry.id}: prev_hash mismatch.`);
         return false;
       }
-
       // 2. Check Content Integrity (Hash matches data)
       const contentToHash = JSON.stringify({
         id: entry.id,
@@ -94,18 +95,14 @@ export class AuditMixin implements IAudit {
         data: entry.data,
         prev_hash: entry.prev_hash
       });
-
       const expectedHash = crypto.createHash('sha256').update(contentToHash).digest('hex');
-
       if (entry.hash !== expectedHash) {
         console.error(`[AUDIT] Hash mismatch at entry ${entry.id}: Data tampered.`);
         return false;
       }
-
       // Move to next link
       currentHash = entry.hash;
     }
-
     return true;
   }
 
@@ -113,7 +110,10 @@ export class AuditMixin implements IAudit {
    * Utility: Get all entries (For debugging or export)
    */
   public async getEntries(): Promise<AuditEntry[]> {
-    return [...this.entries];
+    const keys = await this.state.keys('audit:');
+    const entries = (await Promise.all(keys.map(k => this.state.get<AuditEntry>(k)))).filter(Boolean) as AuditEntry[];
+    entries.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+    return entries;
   }
 
   /**

@@ -8,9 +8,9 @@ import { TelemetryMixin } from './mixins/telemetry.mixin';
 import { AuditMixin } from './mixins/audit.mixin';
 import { FMEAMixin } from './mixins/fmea.mixin';
 import { ACPAdapter, ACPAdapterConfig } from './acp/adapter';
-import { RegistryService } from './acp/registry';
+import { RegistryHttpClient } from './acp/registry-http-client';
 
-export abstract class BaseAgent {
+
   public readonly id: string;
   public readonly config: AgentConfig;
   public readonly identity: AgentIdentity;
@@ -20,7 +20,7 @@ export abstract class BaseAgent {
   public readonly audit: AuditMixin;
   public readonly fmea: FMEAMixin;
   public readonly acp: ACPAdapter;
-  public readonly registry: RegistryService;
+  public readonly registry: RegistryHttpClient;
 
   // Internal State
   private heartbeatInterval: NodeJS.Timeout | null = null;
@@ -58,8 +58,10 @@ export abstract class BaseAgent {
     );
 
     // 4. Initialize Registry (Service Discovery)
-    // Note: In production, pass a shared/remote Registry instance via DI.
-    this.registry = new RegistryService();
+    // Note: In production, use HTTP client for central registry
+    this.registry = new RegistryHttpClient(
+      config.env?.REGISTRY_URL || process.env.REGISTRY_URL || 'http://localhost:3001'
+    );
 
     // 5. Initialize ACP Adapter (Communication)
     const acpConfig: ACPAdapterConfig = {

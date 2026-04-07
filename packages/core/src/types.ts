@@ -16,6 +16,7 @@ export interface AgentIdentity {
 
 export interface AgentConfig {
   identity: AgentIdentity;
+  env?: Record<string, string>; // Ortam değişkenleri için eklendi
   telemetry?: TelemetryConfig;
   audit?: AuditConfig;
   resilience?: ResilienceConfig;
